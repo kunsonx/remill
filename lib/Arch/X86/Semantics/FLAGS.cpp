@@ -22,22 +22,34 @@ namespace {
 // is executed.
 enum : uint32_t { kLHS = 2415899639U, kRHS = 70623199U };
 
-// Zero flags, tells us whether or not a value is zero.
+
 template <typename T>
 [[gnu::const]] ALWAYS_INLINE static bool ZeroFlag(T res) {
   return T(0) == res;
 }
 
-// Zero flags, tells us whether or not a value is zero.
-template <typename T>
-[[gnu::const]] ALWAYS_INLINE static bool NotZeroFlag(T res) {
-  return T(0) != res;
-}
-
-// Sign flag, tells us if a result is signed or unsigned.
 template <typename T>
 [[gnu::const]] ALWAYS_INLINE static bool SignFlag(T res) {
   return 0 > Signed(res);
+}
+
+
+// Zero flags, tells us whether or not a value is zero.
+template <typename T, typename S1, typename S2>
+[[gnu::const]] ALWAYS_INLINE static bool ZeroFlag(T res, S1 lhs, S2 rhs) {
+  return __remill_flag_computation_zero(T(0) == res, lhs, rhs, res);
+}
+
+// Zero flags, tells us whether or not a value is zero.
+template <typename T, typename S1, typename S2>
+[[gnu::const]] ALWAYS_INLINE static bool NotZeroFlag(T res, S1 lhs, S2 rhs) {
+  return !__remill_flag_computation_zero(T(0) == res, lhs, rhs, res);
+}
+
+// Sign flag, tells us if a result is signed or unsigned.
+template <typename T, typename S1, typename S2>
+[[gnu::const]] ALWAYS_INLINE static bool SignFlag(T res, S1 lhs, S2 rhs) {
+  return __remill_flag_computation_sign(0 > Signed(res), lhs, rhs, res);
 }
 
 // Auxiliary carry flag. This is used for binary coded decimal operations and
@@ -97,7 +109,8 @@ struct Overflow<tag_add> {
     const T sign_lhs = lhs >> kSignShift;
     const T sign_rhs = rhs >> kSignShift;
     const T sign_res = res >> kSignShift;
-    return 2 == ((sign_lhs ^ sign_res) + (sign_rhs ^ sign_res));
+    return __remill_flag_computation_overflow(
+        2 == ((sign_lhs ^ sign_res) + (sign_rhs ^ sign_res)), lhs, rhs, res);
   }
 };
 
@@ -114,7 +127,8 @@ struct Overflow<tag_sub> {
     const T sign_lhs = lhs >> kSignShift;
     const T sign_rhs = rhs >> kSignShift;
     const T sign_res = res >> kSignShift;
-    return 2 == ((sign_lhs ^ sign_rhs) + (sign_lhs ^ sign_res));
+    return __remill_flag_computation_overflow(
+        2 == ((sign_lhs ^ sign_rhs) + (sign_lhs ^ sign_res)), lhs, rhs, res);
   }
 };
 
@@ -126,10 +140,11 @@ struct Overflow<tag_mul> {
   // the operands.
   template <typename T, typename R>
   [[gnu::const]] ALWAYS_INLINE static bool
-  Flag(T, T, R res,
+  Flag(T lhs, T rhs, R res,
        typename std::enable_if<sizeof(T) < sizeof(R), int>::type = 0) {
 
-    return static_cast<R>(static_cast<T>(res)) != res;
+    return __remill_flag_computation_overflow(
+        static_cast<R>(static_cast<T>(res)) != res, lhs, rhs, res);
   }
 
   // Signed integer multiplication overflow check, where the result is
@@ -155,7 +170,8 @@ struct Carry<tag_add> {
   [[gnu::const]] ALWAYS_INLINE static bool Flag(T lhs, T rhs, T res) {
     static_assert(std::is_unsigned<T>::value,
                   "Invalid specialization of `Carry::Flag` for addition.");
-    return res < lhs || res < rhs;
+    return __remill_flag_computation_carry(res < lhs || res < rhs, lhs, rhs,
+                                           res);
   }
 };
 
@@ -163,16 +179,19 @@ struct Carry<tag_add> {
 template <>
 struct Carry<tag_sub> {
   template <typename T>
-  [[gnu::const]] ALWAYS_INLINE static bool Flag(T lhs, T rhs, T) {
+  [[gnu::const]] ALWAYS_INLINE static bool Flag(T lhs, T rhs, T res) {
     static_assert(std::is_unsigned<T>::value,
                   "Invalid specialization of `Carry::Flag` for addition.");
-    return lhs < rhs;
+    return __remill_flag_computation_carry(lhs < rhs, lhs, rhs, res);
   }
 };
 
 }  // namespace
 
-#define UndefFlag(name) do { state.aflag.name = __remill_undefined_8(); } while (false)
+#define UndefFlag(name) \
+  do { \
+    state.aflag.name = __remill_undefined_8(); \
+  } while (false)
 
 #define ClearArithFlags() \
   do { \
